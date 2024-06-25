@@ -1,64 +1,91 @@
-import { Server, init, postUpgrade, preUpgrade, setNodeServer } from 'azle';
-import 'reflect-metadata';
+import initSqlJs, { Database as SqlJsDatabase } from 'sql.js/dist/sql-asm.js';
+import { DataSource, EntitySchema, Logger, MixedList } from 'typeorm';
 
-import { Database, DatabaseOptions } from './database';
-import { ENTITIES } from './database/entities';
-import { ConsoleLogger } from './database/logger';
-import { DatabaseStorage } from './database/storage';
-import { CreateServer } from './server';
+import { DatabaseStorage, DatabaseStorageInterface } from './storage';
 
-const databaseOptions: DatabaseOptions = {
-  sincronize: false,
-  migrationsRun: true,
-  storage: new DatabaseStorage({
-    key: 'DATABASE',
-    index: 0,
-  }),
-  entities: ENTITIES,
-  // TODO: Migrations are not found
-  migrations: ['/migrations/*.{ts,js}'],
-  // TODO: logger not working,
-  logger: new ConsoleLogger(false),
+export type DatabaseOptions = {
+  storage: DatabaseStorageInterface;
+  migrations?: MixedList<string | Function>;
+  entities?: MixedList<string | Function | EntitySchema<any>>;
+  sincronize?: boolean;
+  migrationsRun?: boolean;
+  logging?: boolean;
+  logger?: 'advanced-console' | 'simple-console' | 'file' | 'debug' | Logger | undefined;
 };
 
-let db: Database | undefined;
+export const DatabaseDefaults = {
+  storage: new DatabaseStorage(),
+};
 
-export default Server(
-  async () => {
-    db = new Database(databaseOptions);
-    await db.load();
-    return CreateServer();
-  },
-  {
-    init: init([], async () => {
-      try {
-        db = new Database(databaseOptions);
-        await db.init();
-        setNodeServer(CreateServer());
-      } catch (error) {
-        console.error('Error initializing database:', error);
-        throw error;
-      }
-    }),
-    preUpgrade: preUpgrade(() => {
-      try {
-        if (!db) {
-          throw new Error('Database not initialized');
-        }
+export class Database {
+  private dataSource: DataSource | undefined;
+  private storage: DatabaseStorageInterface;
 
-        db.save();
-      } catch (error) {
-        console.error('Error saving database:', error);
+  constructor(private options: DatabaseOptions = DatabaseDefaults) {
+    this.storage = this.options.storage;
+  }
+
+  private async connect(bytes: Uint8Array) {
+    const AppDataSource = new DataSource({
+      type: 'sqljs',
+      // TODO: may I get this from the options?
+      driver: await initSqlJs({}),
+      database: bytes,
+      synchronize: this.options.sincronize,
+      entities: this.options.entities,
+      migrations: this.options.migrations,
+      migrationsRun: this.options.migrationsRun,
+      logging: this.options.logging,
+      logger: this.options.logger,
+    });
+
+    const dataSource = await AppDataSource.initialize();
+
+    return dataSource;
+  }
+
+  public async init() {
+    try {
+      this.options.sincronize = true;
+      this.dataSource = await this.connect(Uint8Array.from([]));
+    } catch (error) {
+      console.error('Error initializing database:', error);
+      throw error;
+    }
+  }
+
+  public async load() {
+    try {
+      const data = (await this.storage.get()) || Uint8Array.from([]);
+
+      if (data.length === 0) {
+        this.options.sincronize = true;
+        console.log('Empty database found in storage');
       }
-    }),
-    postUpgrade: postUpgrade([], async () => {
-      try {
-        db = new Database(databaseOptions);
-        await db.load();
-        setNodeServer(CreateServer());
-      } catch (error) {
-        console.error('Error loading database:', error);
-      }
-    }),
-  },
-);
+
+      this.dataSource = await this.connect(data);
+    } catch (error) {
+      console.error('Error initializing database:', error);
+      throw error;
+    }
+  }
+
+  public async save() {
+    if (!this.dataSource) {
+      throw new Error('Database not initialized');
+    }
+
+    const driver = this.dataSource.driver as unknown as SqlJsDatabase;
+
+    const data = driver.export();
+    await this.storage.set(data);
+  }
+
+  public async getDataSource() {
+    if (!this.dataSource) {
+      throw new Error('Database not initialized');
+    }
+
+    return this.dataSource;
+  }
+}
