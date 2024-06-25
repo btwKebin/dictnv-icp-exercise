@@ -1,6 +1,6 @@
 # dictnv-icp-exercise
 
 Kevin L. Cabauatan
-Cagayan.
+Cagayan
 Male
 June 25, 2024
