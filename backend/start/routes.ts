@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import ApisController from 'App/Controllers/Http/ApisController';
 import UsersController from 'App/Controllers/Http/UsersController';
+import FreedomWallsController from 'App/Controllers/Http/FreedomWallsController';
 import isAuth from 'App/Middleware/Auth';
 
 const Route = Router();
